@@ -21,49 +21,26 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. MAPPING GÉOGRAPHIQUE COMPLET ---
-COUNTRY_TO_CONTINENT = {
-    'United Kingdom': 'Europe', 'France': 'Europe', 'Germany': 'Europe', 'EIRE': 'Europe',
-    'Spain': 'Europe', 'Netherlands': 'Europe', 'Belgium': 'Europe', 'Switzerland': 'Europe',
-    'Portugal': 'Europe', 'Norway': 'Europe', 'Italy': 'Europe', 'Channel Islands': 'Europe',
-    'Finland': 'Europe', 'Cyprus': 'Europe', 'Sweden': 'Europe', 'Austria': 'Europe',
-    'Poland': 'Europe', 'Denmark': 'Europe', 'Greece': 'Europe', 'Malta': 'Europe',
-    'Lithuania': 'Europe', 'Iceland': 'Europe', 'Czech Republic': 'Europe', 
-    'European Community': 'Europe', 'USA': 'Amériques', 'Canada': 'Amériques', 
-    'Brazil': 'Amériques', 'Japan': 'Asie', 'Singapore': 'Asie', 'Israel': 'Asie', 
-    'United Arab Emirates': 'Asie', 'Bahrain': 'Asie', 'Lebanon': 'Asie', 
-    'Saudi Arabia': 'Asie', 'Hong Kong': 'Asie', 'Australia': 'Océanie', 
-    'RSA': 'Afrique', 'Unspecified': 'Non Spécifié'
-}
-
-# --- 4. CHARGEMENT ---
+# --- 3. CHARGEMENT (Pickle) ---
 @st.cache_data
 def load_data():
-    df = pd.read_csv('data.csv', encoding='ISO-8859-1')
-    df.dropna(subset=['CustomerID'], inplace=True)
-    df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
-    df['TotalRevenue'] = df['Quantity'] * df['UnitPrice']
-    df['Month'] = df['InvoiceDate'].dt.to_period('M')
-    df['Year'] = df['InvoiceDate'].dt.year
-    df['Date'] = df['InvoiceDate'].dt.date
-    df['Continent'] = df['Country'].map(COUNTRY_TO_CONTINENT).fillna('Europe')
-    return df
+    return pd.read_pickle('cleaned_ecommerce_data.pkl')
 
-df_raw = load_data()
+try:
+    df_raw = load_data()
+except:
+    st.error("Fichier 'cleaned_ecommerce_data.pkl' introuvable. Lancez votre notebook d'abord.")
+    st.stop()
 
-# --- 5. SIDEBAR ---
-st.sidebar.header("📍 Géographie")
-all_continents = sorted(df_raw['Continent'].unique().tolist())
-sel_continents = st.sidebar.multiselect("Continents", options=all_continents, default=all_continents)
-
-avail_countries = sorted(df_raw[df_raw['Continent'].isin(sel_continents)]['Country'].unique().tolist())
+# --- 4. SIDEBAR ---
+st.sidebar.header("📍 Filtres")
+sel_continents = st.sidebar.multiselect("Continents", options=sorted(df_raw['Continent'].unique()), default=df_raw['Continent'].unique())
+avail_countries = sorted(df_raw[df_raw['Continent'].isin(sel_continents)]['Country'].unique())
 sel_countries = st.sidebar.multiselect("Pays", options=avail_countries, default=avail_countries)
 
-st.sidebar.divider()
-st.sidebar.header("📅 Temporalité")
 time_option = st.sidebar.selectbox("Période", ["Mois actuel", "Année en cours", "Toute la durée"])
 
-# --- 6. LOGIQUE TEMPORELLE ---
+# --- 5. LOGIQUE TEMPORELLE ---
 max_date = df_raw['InvoiceDate'].max()
 curr_m, curr_y = max_date.to_period('M'), max_date.year
 
@@ -82,97 +59,135 @@ else:
 df = df_p[df_p['Country'].isin(sel_countries)]
 df_c = df_prev[df_prev['Country'].isin(sel_countries)] if not df_prev.empty else pd.DataFrame()
 
-# --- 7. CALCULS KPIs ---
+# --- 6. CALCULS KPIs ---
 def stats(d):
     if d.empty: return 0, 0, 0, 0, 0
-    # Chiffre d'affaires Brut (uniquement positif)
     r = d[d['TotalRevenue'] > 0]['TotalRevenue'].sum()
     o = d['InvoiceNo'].nunique()
     c = d['CustomerID'].nunique()
-    # Pertes brutes (uniquement négatif)
     l = abs(d[d['TotalRevenue'] < 0]['TotalRevenue'].sum())
     return r, o, c, (r/o if o>0 else 0), l
 
 sc, sp = stats(df), stats(df_c)
 def delta(curr, prev): return ((curr - prev) / prev * 100) if prev > 0 else 0
 
-# --- 8. AFFICHAGE ---
+# --- 7. INTERFACE PAR ONGLETS ---
 st.title("🌍 Business Intelligence Dashboard")
+tab_global, tab_client = st.tabs(["📊 Vue Globale", "👥 Vue Client"])
 
-# ROW 1: KPIs
-cols = st.columns(5)
-names = ["Revenue", "Commandes", "Clients", "Panier Moyen", "Pertes (Annul.)"]
-for i, col in enumerate(cols):
-    val, d = sc[i], delta(sc[i], sp[i])
-    color = "up" if (d >= 0 if i != 4 else d <= 0) else "down"
-    col.markdown(f"""<div class="kpi-card"><div class="kpi-label">{names[i]}</div><div class="kpi-value">{val:,.0f}{' €' if i in [0,3,4] else ''}</div>
-    <div class="{color}">{"↑" if d>=0 else "↓"} {abs(d):.1f}% <span style="color:#64748B">{comp_label}</span></div></div>""", unsafe_allow_html=True)
+# ==========================================
+# ONGLET 1 : VUE GLOBALE
+# ==========================================
+with tab_global:
+    # ROW 1: KPIs
+    cols = st.columns(5)
+    names = ["Revenue", "Commandes", "Clients", "Panier Moyen", "Pertes (Annul.)"]
+    for i, col in enumerate(cols):
+        val, d = sc[i], delta(sc[i], sp[i])
+        color = "up" if (d >= 0 if i != 4 else d <= 0) else "down"
+        col.markdown(f"""<div class="kpi-card"><div class="kpi-label">{names[i]}</div><div class="kpi-value">{val:,.0f}{' €' if i in [0,3,4] else ''}</div>
+        <div class="{color}">{"↑" if d>=0 else "↓"} {abs(d):.1f}% <span style="color:#64748B">{comp_label}</span></div></div>""", unsafe_allow_html=True)
 
-# ROW 2: Graphiques
-c_left, c_right = st.columns([2, 1])
+    # ROW 2: Graphiques
+    c_left, c_right = st.columns([2, 1])
+    with c_left:
+        st.subheader("📈 Dynamique du Chiffre d'Affaires Net")
+        if not df.empty:
+            net_data = df.groupby(g_col)['TotalRevenue'].sum().reset_index()
+            if g_col == 'Month': net_data['Month'] = net_data['Month'].astype(str)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=net_data[g_col], y=net_data['TotalRevenue'].clip(lower=0), mode='lines', fill='tozeroy', fillcolor='rgba(16, 185, 129, 0.3)', line=dict(color='#10B981'), name='Profit'))
+            fig.add_trace(go.Scatter(x=net_data[g_col], y=net_data['TotalRevenue'].clip(upper=0), mode='lines', fill='tozeroy', fillcolor='rgba(244, 63, 94, 0.3)', line=dict(color='#F43F5E'), name='Perte'))
+            fig.update_layout(template="plotly_dark", hovermode="x unified", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', margin=dict(l=0,r=0,t=10,b=0), showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
 
-with c_left:
-    st.subheader("📈 Dynamique du Chiffre d'Affaires Net")
-    if not df.empty:
-        # 1. Calculer le revenu NET (Ventes + Annulations) par période
-        net_data = df.groupby(g_col)['TotalRevenue'].sum().reset_index()
-        if g_col == 'Month': net_data['Month'] = net_data['Month'].astype(str)
+    with c_right:
+        st.subheader("📊 Part des Pays")
+        if not df.empty:
+            geo = df.groupby('Country')['InvoiceNo'].nunique().reset_index().sort_values('InvoiceNo', ascending=False)
+            plot_df = geo if (len(sel_continents) == 1 and len(geo) <= 7) else pd.concat([geo.head(5), pd.DataFrame({'Country': ['Autres'], 'InvoiceNo': [geo.iloc[5:]['InvoiceNo'].sum()]})])
+            st.plotly_chart(px.pie(plot_df, values='InvoiceNo', names='Country', hole=0.5, template="plotly_dark").update_traces(textinfo='percent+label').update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=0,b=0,l=0,r=0)), use_container_width=True)
+
+    # ROW 3: Produits
+    st.write("##")
+    r3l, r3r = st.columns(2)
+    with r3l:
+        st.subheader("🏆 Top 10 Vendus")
+        top_v = df[df['Quantity'] > 0].groupby('Description')['Quantity'].sum().nlargest(10).reset_index()
+        st.plotly_chart(px.bar(top_v, x='Quantity', y='Description', orientation='h', template="plotly_dark", color_discrete_sequence=['#818CF8']).update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
+    with r3r:
+        st.subheader("🚫 Top 10 Annulés")
+        top_r = df[df['Quantity'] < 0].groupby('Description')['Quantity'].sum().abs().nlargest(10).reset_index()
+        st.plotly_chart(px.bar(top_r, x='Quantity', y='Description', orientation='h', template="plotly_dark", color_discrete_sequence=['#F43F5E']).update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
+
+# ==========================================
+# ONGLET 2 : VUE CLIENT
+# ==========================================
+with tab_client:
+    if df.empty:
+        st.warning("Aucune donnée disponible pour les filtres sélectionnés.")
+    else:
+        st.subheader("💎 Analyse des meilleurs clients")
         
-        # 2. Séparer en deux séries pour la couleur (Profit vs Perte)
-        net_data['Profit'] = net_data['TotalRevenue'].apply(lambda x: x if x > 0 else 0)
-        net_data['Loss'] = net_data['TotalRevenue'].apply(lambda x: x if x < 0 else 0)
-
-        fig = go.Figure()
-
-        # Partie Verte (Profit Net)
-        fig.add_trace(go.Scatter(
-            x=net_data[g_col], y=net_data['Profit'],
-            mode='lines', line=dict(width=2, color='#10B981'),
-            fill='tozeroy', fillcolor='rgba(16, 185, 129, 0.3)',
-            name='Profit Net',
-            hovertemplate='Profit: %{y:,.2f} €<extra></extra>'
-        ))
-
-        # Partie Rouge (Perte Nette)
-        fig.add_trace(go.Scatter(
-            x=net_data[g_col], y=net_data['Loss'],
-            mode='lines', line=dict(width=2, color='#F43F5E'),
-            fill='tozeroy', fillcolor='rgba(244, 63, 94, 0.3)',
-            name='Perte Nette',
-            hovertemplate='Perte: %{y:,.2f} €<extra></extra>'
-        ))
-
-        fig.update_layout(
-            template="plotly_dark",
-            hovermode="x unified",
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(0,0,0,0)',
-            margin=dict(l=0, r=0, t=10, b=0),
-            showlegend=False,
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor='#334155', zeroline=True, zerolinecolor='#F8FAFC')
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-with c_right:
-    st.subheader("📊 Part des Pays")
-    if not df.empty:
-        geo = df.groupby('Country')['InvoiceNo'].nunique().reset_index().sort_values('InvoiceNo', ascending=False)
-        nb_c = len(sel_continents)
-        plot_df = geo if (nb_c == 1 and len(geo) <= 7) else pd.concat([geo.head(5), pd.DataFrame({'Country': ['Autres'], 'InvoiceNo': [geo.iloc[5:]['InvoiceNo'].sum()]})])
+        # --- CALCULS CLIENTS ---
+        client_stats = df.groupby('CustomerID').agg({
+            'InvoiceNo': 'nunique',
+            'TotalRevenue': 'sum'
+        }).reset_index()
         
-        fig_p = px.pie(plot_df, values='InvoiceNo', names='Country', hole=0.5, template="plotly_dark")
-        fig_p.update_traces(textinfo='percent+label')
-        fig_p.update_layout(showlegend=False, paper_bgcolor='rgba(0,0,0,0)', margin=dict(t=0,b=0,l=0,r=0))
-        st.plotly_chart(fig_p, use_container_width=True)
-
-# ROW 3: Produits
-r3l, r3r = st.columns(2)
-with r3l:
-    st.subheader("🏆 Top 10 Vendus")
-    top_v = df[df['Quantity'] > 0].groupby('Description')['Quantity'].sum().nlargest(10).reset_index()
-    st.plotly_chart(px.bar(top_v, x='Quantity', y='Description', orientation='h', template="plotly_dark", color_discrete_sequence=['#818CF8']).update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
-with r3r:
-    st.subheader("🚫 Top 10 Annulés")
-    top_r = df[df['Quantity'] < 0].groupby('Description')['Quantity'].sum().abs().nlargest(10).reset_index()
-    st.plotly_chart(px.bar(top_r, x='Quantity', y='Description', orientation='h', template="plotly_dark", color_discrete_sequence=['#F43F5E']).update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)'), use_container_width=True)
+        # Calcul spécifique demandé : Valeur nette - nombre de retours
+        # Note : On compte le nombre de transactions négatives pour ce client
+        returns_count = df[df['TotalRevenue'] < 0].groupby('CustomerID')['InvoiceNo'].nunique().reset_index()
+        returns_count.columns = ['CustomerID', 'NbRetours']
+        
+        client_stats = pd.merge(client_stats, returns_count, on='CustomerID', how='left').fillna(0)
+        client_stats['ScoreNet'] = client_stats['TotalRevenue'] - client_stats['NbRetours']
+        
+        best_client_row = client_stats.nlargest(1, 'InvoiceNo').iloc[0]
+        
+        # --- AFFICHAGE MEILLEUR CLIENT ---
+        c_info, c_metric1, c_metric2 = st.columns([2, 1, 1])
+        
+        with c_info:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-label">🏆 Meilleur Client de la sélection</div>
+                <div class="kpi-value">ID: {int(best_client_row['CustomerID'])}</div>
+                <div style="color:#94A3B8; font-size:0.9rem; margin-top:5px;">
+                    Basé sur le nombre de commandes uniques
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with c_metric1:
+            st.metric("Total Commandes", f"{int(best_client_row['InvoiceNo'])}")
+            
+        with c_metric2:
+            st.metric("Valeur Nette (vs Retours)", f"{best_client_row['ScoreNet']:,.2f} €")
+        
+        st.write("##")
+        
+        # --- GRAPHQUES PROPORTION ---
+        col_bar1, col_bar2 = st.columns(2)
+        
+        with col_bar1:
+            st.markdown("**📊 Top 10 Clients (Nombre de Commandes)**")
+            top_10_qty = client_stats.nlargest(10, 'InvoiceNo')
+            top_10_qty['CustomerID'] = top_10_qty['CustomerID'].astype(int).astype(str)
+            fig_qty = px.bar(top_10_qty, x='InvoiceNo', y='CustomerID', orientation='h', 
+                             color_discrete_sequence=['#FBBF24'], template="plotly_dark")
+            fig_qty.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_qty, use_container_width=True)
+            
+        with col_bar2:
+            st.markdown("**💰 Top 10 Clients (Valeur Nette Totale)**")
+            top_10_val = client_stats.nlargest(10, 'TotalRevenue')
+            top_10_val['CustomerID'] = top_10_val['CustomerID'].astype(int).astype(str)
+            fig_val = px.bar(top_10_val, x='TotalRevenue', y='CustomerID', orientation='h', 
+                             color_discrete_sequence=['#10B981'], template="plotly_dark")
+            fig_val.update_layout(yaxis={'categoryorder':'total ascending'}, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+            st.plotly_chart(fig_val, use_container_width=True)
+            
+        st.divider()
+        st.markdown("**📄 Détail des 50 plus gros clients**")
+        st.dataframe(client_stats.nlargest(50, 'TotalRevenue').drop(columns=['ScoreNet']), use_container_width=True)
